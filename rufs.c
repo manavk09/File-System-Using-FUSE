@@ -166,7 +166,9 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
 	while(ptr_index < DIRECT_PTR_SIZE){
 		if(dir_inode.direct_ptr[ptr_index] != VALID){
 			//that means no block exists to allocate it
+			dir_inode.direct_ptr[ptr_index] = get_avail_blkno();
 			
+
 		}
 	}
 	// Allocate a new data block for this directory if it does not exist
