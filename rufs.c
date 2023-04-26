@@ -406,9 +406,7 @@ static int rufs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, 
 		while(block_index < num_dir){
 			if(directories[block_index].valid == VALID){
 				//copy it
-				struct inode* temp = malloc((sizeof(struct inode)));
-				readi(directories[block_index].ino, temp);
-				filler(buffer,directories[block_index].name, &(temp->vstat), 0);
+				filler(buffer,directories[block_index].name, NULL, 0);
 			}
 			block_index++;
 		}
@@ -424,14 +422,14 @@ static int rufs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, 
 
 static int rufs_mkdir(const char *path, mode_t mode) {
 	// Step 1: Use dirname() and basename() to separate parent directory path and target directory name
-	char * parent = (char *)malloc(strlen(path) + 1) ;
+	char * parent = (char *)malloc(strlen(path) + 1);
 	strcpy(parent, path);
 	dirname(parent);
 	//printf("dirPath: %s\n", directoryPath) ;
-	char * dir_to_add = (char *)malloc(strlen(path) + 1) ;
-	strcpy(dir_to_add, path) ;
+	char * dir_to_add = (char *)malloc(strlen(path) + 1);
+	strcpy(dir_to_add, path);
 	//printf("Before baseName %s\n", baseName) ;
-	dir_to_add = basename(dir_to_add) ;
+	dir_to_add = basename(dir_to_add);
 
 	// Step 2: Call get_node_by_path() to get inode of parent directory
 	struct inode *parent_inode = malloc(sizeof(struct inode));
@@ -447,6 +445,7 @@ static int rufs_mkdir(const char *path, mode_t mode) {
 
 	// Step 5: Update inode for target directory
 	struct inode *just_added_dir = malloc(sizeof(struct inode));
+	readi(ino_available,just_added_dir);
 	just_added_dir->ino = ino_available;
 	just_added_dir->valid = VALID;
 	just_added_dir->type = 1;
@@ -459,6 +458,7 @@ static int rufs_mkdir(const char *path, mode_t mode) {
 	dir_add(*just_added_dir, parent_inode->ino, "..", strlen("..")); //adding in the .. to
 	// Step 6: Call writei() to write inode to disk
 	//dir_add will do the last writei()
+	free(just_added_dir);
 
 	return 0;
 }
@@ -489,27 +489,50 @@ static int rufs_releasedir(const char *path, struct fuse_file_info *fi) {
 static int rufs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
 
 	// Step 1: Use dirname() and basename() to separate parent directory path and target file name
+	char * parent = (char *)malloc(strlen(path) + 1);
+	strcpy(parent, path);
+	dirname(parent);
+
+	char * file_to_add = (char *)malloc(strlen(path) + 1);
+	strcpy(file_to_add, path);
+	file_to_add = basename(file_to_add);
 
 	// Step 2: Call get_node_by_path() to get inode of parent directory
+	struct inode *parent_inode = malloc(sizeof(struct inode));
+	if(get_node_by_path(parent, 0, parent_inode) != 0){
+		return -ENOENT;
+	}
 
 	// Step 3: Call get_avail_ino() to get an available inode number
-
+	int ino_available = get_avail_ino();
 	// Step 4: Call dir_add() to add directory entry of target file to parent directory
-
+	dir_add(*parent_inode, ino_available, file_to_add, strlen(file_to_add));
 	// Step 5: Update inode for target file
+	struct inode *just_added_file = malloc(sizeof(struct inode));
+	readi(ino_available,just_added_file);
+	just_added_file->ino = ino_available;
+	just_added_file->valid = VALID;
+	just_added_file->type = 0;
+	just_added_file->size = 0;
+	just_added_file->vstat.st_mode = S_IFREG | 0666;
+	just_added_file->direct_ptr[0] = get_avail_blkno();
 
 	// Step 6: Call writei() to write inode to disk
-
+	writei(ino_available, just_added_file);
+	free(just_added_file);
 	return 0;
 }
 
 static int rufs_open(const char *path, struct fuse_file_info *fi) {
 
+	struct inode *inode_lookup = malloc(sizeof(struct inode));
 	// Step 1: Call get_node_by_path() to get inode from path
-
+	if(get_node_by_path(path, 0, inode_lookup) == 0){
+		//success
+		return 0;
+	}
 	// Step 2: If not find, return -1
-
-	return 0;
+    return -ENOENT;
 }
 
 static int rufs_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
