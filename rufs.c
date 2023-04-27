@@ -425,10 +425,8 @@ static int rufs_mkdir(const char *path, mode_t mode) {
 	char * parent = (char *)malloc(strlen(path) + 1);
 	strcpy(parent, path);
 	dirname(parent);
-	//printf("dirPath: %s\n", directoryPath) ;
 	char * dir_to_add = (char *)malloc(strlen(path) + 1);
 	strcpy(dir_to_add, path);
-	//printf("Before baseName %s\n", baseName) ;
 	dir_to_add = basename(dir_to_add);
 
 	// Step 2: Call get_node_by_path() to get inode of parent directory
@@ -538,26 +536,99 @@ static int rufs_open(const char *path, struct fuse_file_info *fi) {
 static int rufs_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
 
 	// Step 1: You could call get_node_by_path() to get inode from path
+	struct inode* file_inode = malloc(sizeof(struct inode));
+	if(get_node_by_path(path, 0, file_inode) != 0) {
+		return -ENOENT;
+	}
 
 	// Step 2: Based on size and offset, read its data blocks from disk
+	int blocksToRead = (size / BLOCK_SIZE) + 1;
+	int bytesRead = 0;
+	int block = offset / BLOCK_SIZE;
+	for(int i = 0; i < blocksToRead; i++) {
+		if(file_inode->direct_ptr[i] == 0) {
+			return bytesRead;
+		}
+		else {
+			void* tempBuf = malloc(BLOCK_SIZE);
+			bio_read(file_inode->direct_ptr[block], tempBuf);
+			int offsetDiff = BLOCK_SIZE - (offset % BLOCK_SIZE);
+			int bytesToRead = (size >= offsetDiff) ? offsetDiff : size;
+			memcpy(buffer + bytesRead, tempBuf + (offset % BLOCK_SIZE), bytesToRead);
+			size -= bytesToRead;
+			bytesRead += bytesToRead;
 
-	// Step 3: copy the correct amount of data from offset to buffer
+			offset = 0;
+			block++;	
+			free(tempBuf);
+		}
+	}
 
-	// Note: this function should return the amount of bytes you copied to buffer
-	return 0;
+	time(&(file_inode->vstat.st_atime));
+	writei(file_inode->ino, file_inode);
+	free(file_inode);
+	// Note: this function should return the amount of bytes you read from disk
+	return bytesRead;
 }
 
 static int rufs_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
+
+	// Note: this function should return the amount of bytes you write to disk
+
 	// Step 1: You could call get_node_by_path() to get inode from path
+	struct inode* file_inode = malloc(sizeof(struct inode));
+	if(get_node_by_path(path, 0, file_inode) != 0) {
+		return -ENOENT;
+	}
 
 	// Step 2: Based on size and offset, read its data blocks from disk
+	int blocksToWrite = (size / BLOCK_SIZE) + 1;
+	int bytesWritten = 0;
+	int block = offset / BLOCK_SIZE;
+	for(int i = 0; i < blocksToWrite && i < DIRECT_PTR_SIZE; i++) {
+		char* tempBuf = malloc(BLOCK_SIZE);
+		if(file_inode->direct_ptr[block] == 0) {
+			int newBlock = get_avail_blkno();
+			file_inode->direct_ptr[block] = newBlock;
+			
+			int offsetDiff = BLOCK_SIZE - (offset % BLOCK_SIZE);
+			int bytesToWrite = (size >= offsetDiff) ? offsetDiff : size;
+
+			memcpy(tempBuf + (offset % BLOCK_SIZE), buffer + bytesWritten, BLOCK_SIZE);
+			size -= bytesToWrite;
+			bytesWritten += bytesToWrite;
+			file_inode->size += bytesToWrite;
+
+			bio_write(newBlock, tempBuf);
+			free(tempBuf);
+		}
+		else {
+			bio_read(file_inode->direct_ptr[block], tempBuf);
+			int offsetDiff = BLOCK_SIZE - (offset % BLOCK_SIZE);
+			int bytesToWrite = (size >= offsetDiff) ? offsetDiff : size; 
+
+			memcpy(tempBuf + (offset % BLOCK_SIZE), buffer + bytesWritten, bytesToWrite);
+			size -= bytesToWrite;
+			bytesWritten += bytesToWrite;
+			file_inode->size += bytesToWrite;
+
+			bio_write(file_inode->direct_ptr[block], tempBuf);
+			free(tempBuf);
+		}
+		offset = 0;
+		block++;	
+	}
 
 	// Step 3: Write the correct amount of data from offset to disk
 
 	// Step 4: Update the inode info and write it to disk
+ 	time(&(file_inode->vstat.st_mtime));
+	file_inode->vstat.st_size += bytesWritten;
+	writei(file_inode->ino, file_inode);
+	free(file_inode);
 
 	// Note: this function should return the amount of bytes you write to disk
-	return size;
+	return bytesWritten;
 }
 
 static int rufs_unlink(const char *path) {
