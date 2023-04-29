@@ -79,8 +79,8 @@ int readi(uint16_t ino, struct inode *inode) {
   	// Step 3: Read the block from disk and then copy into inode structure
   	struct inode *reading_block = malloc(BLOCK_SIZE);
 	bio_read(block, (void*) reading_block);
-	*inode = reading_block[offset];
-	free(reading_block);
+	memcpy(inode,&reading_block[offset],sizeof(struct inode));
+	//free(reading_block);
 	return 0;
 }
 
@@ -117,6 +117,8 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
 	int block_index = 0;
 	while(ptr_index < DIRECT_PTR_SIZE){
 		if(curr_dir_inode->direct_ptr[ptr_index] == 0){
+			free(curr_dir_inode);
+			free(cur_dir_db);
 			return -1;
 		}
 		
@@ -129,6 +131,8 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
 			if(cur_dir_db[block_index].valid == VALID && strcmp(fname,cur_dir_db[block_index].name) == 0){
 				time(&(curr_dir_inode->vstat.st_atime));
 				*dirent = cur_dir_db[block_index];
+				free(curr_dir_inode);
+				free(cur_dir_db);
 				return 0;
 			}
 			block_index++;
@@ -137,7 +141,8 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
 		block_index = 0;
 		ptr_index++;
 	}
-
+	free(curr_dir_inode);
+	free(cur_dir_db);
 	return -1;
 }
 
@@ -155,6 +160,7 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
 		bio_read(dir_inode.direct_ptr[ptr_index], cur_dir_db);
 		while(block_index < num_dir){
 			if(cur_dir_db[block_index].valid == VALID && strcmp(fname, cur_dir_db[block_index].name) == 0){
+				free(cur_dir_db);
 				return -1; // meaning that this name is already in use
 			}
 			block_index++;
@@ -187,27 +193,25 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
 				strcpy(cur_dir_db[block_index].name, fname);
 				cur_dir_db[block_index].len = name_len;
 				cur_dir_db[block_index].valid = VALID;
-				break;
+				// Update directory inode
+				dir_inode.size += sizeof(struct dirent);
+				//stat stuff for later
+				dir_inode.vstat.st_size += sizeof(struct dirent);
+				time(&(dir_inode.vstat.st_mtime));
+				// Write directory entry
+				writei(dir_inode.ino, &dir_inode);
+				bio_write(dir_inode.direct_ptr[ptr_index], cur_dir_db);
+				free(cur_dir_db);
+				return 0;
 			}
 			block_index++;
+		}
 
-		}
-		if(cur_dir_db[block_index].valid == VALID){
-			break;
-		}
 		block_index = 0;
 		ptr_index++;
 	}
-	
-	// Update directory inode
-	dir_inode.size += sizeof(struct dirent);
-	//stat stuff for later
-	dir_inode.vstat.st_size += sizeof(struct dirent);
-	time(&(dir_inode.vstat.st_mtime));
-	// Write directory entry
-	writei(dir_inode.ino, &dir_inode);
-	bio_write(dir_inode.direct_ptr[ptr_index], cur_dir_db);
-	return 0;
+	free(cur_dir_db);
+	return -1;
 }
 
 int dir_remove(struct inode dir_inode, const char *fname, size_t name_len) {
@@ -234,12 +238,14 @@ int get_node_by_path(const char *path, uint16_t ino, struct inode *inode) {
 	
 	while(path_arr != NULL){
 		if(dir_find(cur_dir_db->ino, path_arr, strlen(path_arr), cur_dir_db) == -1){
+			free(cur_dir_db);
 			return -1;
 		}
 		path_arr = strtok(NULL,"/");
 	}
 
 	readi(cur_dir_db->ino,inode);
+	free(cur_dir_db);
 	return 0;
 }
 
@@ -320,7 +326,7 @@ int rufs_mkfs() {
 	strcpy(root_dir[1].name, "..");
 	root_dir[1].len = strlen(root_dir[1].name);
 	bio_write(superblock->d_start_blk, root_dir); //67
-	printf("[RUFS_MKFS]: finished\n");
+	free(root_dir);
 	return 0;
 }
 
@@ -364,12 +370,13 @@ static int rufs_getattr(const char *path, struct stat *stbuf) {
 	struct inode *inode_lookup = malloc(sizeof(struct inode));
 	// Step 1: call get_node_by_path() to get inode from path
 	if(get_node_by_path(path, 0, inode_lookup) != 0){
+		free(inode_lookup);
 		return -ENOENT;
 	}
 	
 	// Step 2: fill attribute of file into stbuf from inode
 	*stbuf = inode_lookup->vstat;
-
+	free(inode_lookup);
 	return 0;
 }
 
@@ -379,9 +386,11 @@ static int rufs_opendir(const char *path, struct fuse_file_info *fi) {
 	// Step 1: Call get_node_by_path() to get inode from path
 	if(get_node_by_path(path, 0, inode_lookup) == 0){
 		//success
+		free(inode_lookup);
 		return 0;
 	}
 	// Step 2: If not find, return -1
+	free(inode_lookup);
     return -ENOENT;
 }
 
@@ -390,6 +399,7 @@ static int rufs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, 
 	// Step 1: Call get_node_by_path() to get inode from path
 	struct inode *inode_lookup = malloc(sizeof(struct inode));
 	if(get_node_by_path(path, 0, inode_lookup) != 0){
+		free(inode_lookup);
 		return -ENOENT;
 	}
 
@@ -415,23 +425,32 @@ static int rufs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, 
 		ptr_index++;
 
 	}
-
+	free(directories);
+	free(inode_lookup);
 	return 0;
 }
 
 
 static int rufs_mkdir(const char *path, mode_t mode) {
 	// Step 1: Use dirname() and basename() to separate parent directory path and target directory name
-	char * parent = (char *)malloc(strlen(path) + 1);
-	strcpy(parent, path);
-	dirname(parent);
-	char * dir_to_add = (char *)malloc(strlen(path) + 1);
-	strcpy(dir_to_add, path);
-	dir_to_add = basename(dir_to_add);
+	char *parent = malloc(strlen(path) + 1);
+    strcpy(parent, path);
+    dirname(parent);
+    char *dir_to_add = malloc(strlen(path) + 1);
+    strcpy(dir_to_add, path);
 
+    char *dir_copy = malloc(strlen(path) + 1);
+    strcpy(dir_copy, path);
+    char *dir_name = basename(dir_copy);
+
+    strcpy(dir_to_add, dir_name);
+	free(dir_copy);
 	// Step 2: Call get_node_by_path() to get inode of parent directory
 	struct inode *parent_inode = malloc(sizeof(struct inode));
 	if(get_node_by_path(parent, 0, parent_inode) != 0){
+		free(parent_inode);
+		free(dir_to_add);
+		free(parent);
 		return -ENOENT;
 	}
 
@@ -457,6 +476,9 @@ static int rufs_mkdir(const char *path, mode_t mode) {
 	// Step 6: Call writei() to write inode to disk
 	//dir_add will do the last writei()
 	free(just_added_dir);
+	free(parent_inode);
+	free(dir_to_add);
+	free(parent);
 
 	return 0;
 }
@@ -487,17 +509,25 @@ static int rufs_releasedir(const char *path, struct fuse_file_info *fi) {
 static int rufs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
 
 	// Step 1: Use dirname() and basename() to separate parent directory path and target file name
-	char * parent = (char *)malloc(strlen(path) + 1);
-	strcpy(parent, path);
-	dirname(parent);
+	char *parent = malloc(strlen(path) + 1);
+    strcpy(parent, path);
+    dirname(parent);
+    char *file_to_add = malloc(strlen(path) + 1);
+    strcpy(file_to_add, path);
 
-	char * file_to_add = (char *)malloc(strlen(path) + 1);
-	strcpy(file_to_add, path);
-	file_to_add = basename(file_to_add);
+    char *file_copy = malloc(strlen(path) + 1);
+    strcpy(file_copy, path);
+    char *file_name = basename(file_copy);
+
+    strcpy(file_to_add, file_name);
+	free(file_copy);
 
 	// Step 2: Call get_node_by_path() to get inode of parent directory
 	struct inode *parent_inode = malloc(sizeof(struct inode));
 	if(get_node_by_path(parent, 0, parent_inode) != 0){
+		free(parent_inode);
+		free(file_to_add);
+		free(parent);
 		return -ENOENT;
 	}
 
@@ -518,6 +548,9 @@ static int rufs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 	// Step 6: Call writei() to write inode to disk
 	writei(ino_available, just_added_file);
 	free(just_added_file);
+	free(parent_inode);
+	free(file_to_add);
+	free(parent);
 	return 0;
 }
 
@@ -527,9 +560,11 @@ static int rufs_open(const char *path, struct fuse_file_info *fi) {
 	// Step 1: Call get_node_by_path() to get inode from path
 	if(get_node_by_path(path, 0, inode_lookup) == 0){
 		//success
+		free(inode_lookup);
 		return 0;
 	}
 	// Step 2: If not find, return -1
+	free(inode_lookup);
     return -ENOENT;
 }
 
