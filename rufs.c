@@ -80,7 +80,6 @@ int readi(uint16_t ino, struct inode *inode) {
   	struct inode *reading_block = malloc(BLOCK_SIZE);
 	bio_read(block, (void*) reading_block);
 	memcpy(inode,&reading_block[offset],sizeof(struct inode));
-	//free(reading_block);
 	return 0;
 }
 
@@ -160,7 +159,7 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
 		while(block_index < num_dir){
 			if(cur_dir_db[block_index].valid == VALID && strcmp(fname, cur_dir_db[block_index].name) == 0){
 				free(cur_dir_db);
-				return -1; // meaning that this name is already in use
+				return -1;
 			}
 			block_index++;
 		}
@@ -194,7 +193,6 @@ int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t na
 				cur_dir_db[block_index].valid = VALID;
 				// Update directory inode
 				dir_inode.size += sizeof(struct dirent);
-				//stat stuff for later
 				dir_inode.vstat.st_size += sizeof(struct dirent);
 				time(&(dir_inode.vstat.st_mtime));
 				// Write directory entry
@@ -272,11 +270,6 @@ int rufs_mkfs() {
 	// initialize data block bitmap
 	d_bmap = malloc(BLOCK_SIZE);
 	
-	// update bitmap information for root directory
-	// set_bitmap(d_bmap, 0); //super block
-	// set_bitmap(d_bmap, 1); //i_bmap
-	// set_bitmap(d_bmap, 2); //d_map
-	
 	//setting the inodes
 	int index = 0;
 	while(index < superblock->d_start_blk){
@@ -284,7 +277,6 @@ int rufs_mkfs() {
 		index++;
 	}
 	bio_write(superblock->d_bitmap_blk, d_bmap);
-	
 	
 	// update inode for root directory
 	struct inode *root_dir_inode = malloc(BLOCK_SIZE);
@@ -305,7 +297,7 @@ int rufs_mkfs() {
 	root_dir_inode->vstat.st_gid = getgid();
 	root_dir_inode->vstat.st_uid = getuid();
 	time(&(root_dir_inode->vstat.st_mtime));
-	//time(&(root_dir_inode->vstat.st_ctime));
+	time(&(root_dir_inode->vstat.st_ctime));
 
 	//Write root node
 	bio_write(superblock->i_start_blk, root_dir_inode);
@@ -356,7 +348,7 @@ static void *rufs_init(struct fuse_conn_info *conn) {
 static void rufs_destroy(void *userdata) {
 
 	// Step 1: De-allocate in-memory data structures
-	free(superblock); //free stat before do that after adding stat stuff
+	free(superblock);
 	free(d_bmap);
 	free(i_bmap);
 	// Step 2: Close diskfile
