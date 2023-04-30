@@ -147,7 +147,6 @@ int dir_find(uint16_t ino, const char *fname, size_t name_len, struct dirent *di
 }
 
 int dir_add(struct inode dir_inode, uint16_t f_ino, const char *fname, size_t name_len) {
-	printf("[DIR_ADD]: in dir add\n");
 	// Step 1: Read dir_inode's data block and check each directory entry of dir_inode
 	struct dirent *cur_dir_db = malloc(BLOCK_SIZE);
 	// Step 2: Check if fname (directory name) is already used in other entries
@@ -291,14 +290,12 @@ int rufs_mkfs() {
 	struct inode *root_dir_inode = malloc(BLOCK_SIZE);
 	bio_read(superblock->i_start_blk, root_dir_inode);
 	root_dir_inode->ino = get_avail_ino(); //inode 0
-	printf("[RUFS_MKFS]: inode num: %d\n", root_dir_inode->ino);
 	root_dir_inode->valid = 1; //is valid
 	root_dir_inode->type = 1; //dir
 	root_dir_inode->link = 0; //no links yet
 	memset(root_dir_inode->direct_ptr, 0, sizeof(int) * 16);
 	memset(root_dir_inode->indirect_ptr, 0, sizeof(int) * 8);
 	root_dir_inode->direct_ptr[0] = get_avail_blkno();//block 67
-	printf("[RUFS_MKFS]: blk num: %d\n", root_dir_inode->direct_ptr[0]);
 	
 	//set stats
 	root_dir_inode->vstat.st_mode = S_IFDIR | 0755;
@@ -582,6 +579,11 @@ static int rufs_read(const char *path, char *buffer, size_t size, off_t offset, 
 	int block = offset / BLOCK_SIZE;
 	for(int i = 0; i < blocksToRead; i++) {
 		if(file_inode->direct_ptr[i] == 0) {
+			if(i > 0) {
+				time(&(file_inode->vstat.st_atime));
+				writei(file_inode->ino, file_inode);
+			}
+			free(file_inode);
 			return bytesRead;
 		}
 		else {
