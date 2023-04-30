@@ -347,6 +347,8 @@ static void *rufs_init(struct fuse_conn_info *conn) {
 
 static void rufs_destroy(void *userdata) {
 
+	printf("\nBlocks used: %d\n", get_avail_blkno());	
+
 	// Step 1: De-allocate in-memory data structures
 	free(superblock);
 	free(d_bmap);
@@ -532,7 +534,6 @@ static int rufs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 	just_added_file->type = 0;
 	just_added_file->size = 0;
 	just_added_file->vstat.st_mode = S_IFREG | 0666;
-	just_added_file->direct_ptr[0] = get_avail_blkno();
 
 	// Step 6: Call writei() to write inode to disk
 	writei(ino_available, just_added_file);
@@ -566,7 +567,7 @@ static int rufs_read(const char *path, char *buffer, size_t size, off_t offset, 
 	}
 
 	// Step 2: Based on size and offset, read its data blocks from disk
-	int blocksToRead = (size / BLOCK_SIZE) + 1;
+	int blocksToRead = (size % BLOCK_SIZE == 0) ? size / BLOCK_SIZE : (size / BLOCK_SIZE) + 1;
 	int bytesRead = 0;
 	int block = offset / BLOCK_SIZE;
 	for(int i = 0; i < blocksToRead; i++) {
@@ -611,7 +612,7 @@ static int rufs_write(const char *path, const char *buffer, size_t size, off_t o
 	}
 
 	// Step 2: Based on size and offset, read its data blocks from disk
-	int blocksToWrite = (size / BLOCK_SIZE) + 1;
+	int blocksToWrite = (size % BLOCK_SIZE == 0) ? size / BLOCK_SIZE : (size / BLOCK_SIZE) + 1;
 	int bytesWritten = 0;
 	int block = offset / BLOCK_SIZE;
 	for(int i = 0; i < blocksToWrite && i < DIRECT_PTR_SIZE; i++) {
