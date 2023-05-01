@@ -345,9 +345,7 @@ static void *rufs_init(struct fuse_conn_info *conn) {
 	return NULL;
 }
 
-static void rufs_destroy(void *userdata) {
-
-	printf("\nBlocks used: %d\n", get_avail_blkno());	
+static void rufs_destroy(void *userdata) {	
 
 	// Step 1: De-allocate in-memory data structures
 	free(superblock);
